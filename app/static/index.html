@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Colap — cola + pila de pendientes</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel2: #1e222e; --line: #2a2f3d;
+    --text: #e6e9f0; --dim: #98a0b3; --acc: #6c8cff; --ok: #4cd495;
+    --warn: #ffb454; --err: #ff6c7d; --r: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 24px; max-width: 1200px; margin: 0 auto;
+  }
+  h1 { font-size: 26px; letter-spacing: 2px; }
+  .sub { color: var(--dim); font-size: 13px; margin-top: 2px; }
+  header { display: flex; align-items: flex-start; justify-content: space-between;
+           gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .toggle { display: flex; background: var(--panel); border: 1px solid var(--line);
+            border-radius: 999px; padding: 4px; }
+  .toggle button { border: 0; background: transparent; color: var(--dim);
+            padding: 6px 14px; border-radius: 999px; cursor: pointer; font-weight: 600; }
+  .toggle button.on { background: var(--acc); color: #0b0d13; }
+  .pill { border: 1px solid var(--line); background: var(--panel);
+          border-radius: 999px; padding: 7px 12px; font-size: 12px; color: var(--dim); }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+  .pill.bad { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, var(--line)); }
+  .lbl { font-size: 12px; color: var(--dim); margin-right: 4px; }
+  .sw { position: relative; width: 34px; height: 19px; display: inline-block; }
+  .sw input { display: none; }
+  .sw span { position: absolute; inset: 0; background: var(--line);
+             border-radius: 999px; transition: .2s; cursor: pointer; }
+  .sw span::after { content: ""; position: absolute; top: 2px; left: 2px;
+             width: 15px; height: 15px; border-radius: 50%; background: var(--dim); transition: .2s; }
+  .sw input:checked + span { background: var(--acc); }
+  .sw input:checked + span::after { left: 17px; background: #0b0d13; }
+
+  form.nueva { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  input, textarea { background: var(--panel); border: 1px solid var(--line);
+    color: var(--text); border-radius: var(--r); padding: 10px 12px; font: inherit; }
+  form.nueva input[name=title] { flex: 2 1 260px; }
+  form.nueva input[name=desc] { flex: 3 1 260px; }
+  button.cta { background: var(--acc); color: #0b0d13; border: 0; font-weight: 700;
+    border-radius: var(--r); padding: 10px 18px; cursor: pointer; }
+  button.cta:active { transform: scale(.97); }
+
+  .statsbar { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0 20px; }
+  .stat { background: var(--panel); border: 1px solid var(--line);
+          border-radius: var(--r); padding: 10px 16px; min-width: 110px; }
+  .stat b { font-size: 20px; display: block; }
+  .stat span { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
+
+  .grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .col h2 { font-size: 13px; color: var(--dim); text-transform: uppercase;
+            letter-spacing: 2px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .badge-n { background: var(--panel2); border: 1px solid var(--line); color: var(--dim);
+             border-radius: 999px; padding: 1px 9px; font-size: 11px; }
+  .hint { font-size: 12px; color: var(--dim); margin-bottom: 12px; }
+  .empty { color: var(--dim); font-style: italic; padding: 30px 0; text-align: center; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+          padding: 14px 16px; margin-bottom: 10px; transition: .15s; }
+  .card.top { background: linear-gradient(160deg, var(--panel2), var(--panel));
+              border-color: var(--acc); padding: 18px; margin-bottom: 14px;
+              box-shadow: 0 6px 24px rgba(108,140,255,.12); }
+  .row1 { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .title { font-weight: 600; font-size: 16px; }
+  .card.top .title { font-size: 18px; }
+  .meta { font-size: 12px; color: var(--dim); margin-top: 4px; display: flex;
+          gap: 8px; flex-wrap: wrap; align-items: center; }
+  .tag { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); }
+  .tag.p1 { color: var(--err); border-color: color-mix(in srgb, var(--err) 45%, var(--line)); }
+  .tag.p2 { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+  .tag.p3 { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .tag.ia { color: var(--acc); border-color: color-mix(in srgb, var(--acc) 45%, var(--line)); }
+  .desc { color: var(--dim); font-size: 13px; margin-top: 6px; white-space: pre-wrap; }
+  .acts { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .acts button { border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+    border-radius: 9px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+  .acts button.done { background: var(--ok); color: #0b0d13; border-color: var(--ok); font-weight: 700; }
+  .acts button.tri { color: var(--acc); }
+  .acts button.del:hover { color: var(--err); border-color: var(--err); }
+  .acts button.spin { opacity: .5; pointer-events: none; }
+  .card.stacked { opacity: .82; }
+  .done-item { border-left: 3px solid var(--ok); padding: 8px 12px;
+               background: var(--panel); border-radius: 8px; margin-bottom: 7px; }
+  .done-item .t { text-decoration: line-through; color: var(--dim); font-size: 14px; }
+  .done-item .when { font-size: 11px; color: var(--dim); margin-left: 6px; }
+  .modehint { font-size: 12px; color: var(--acc); margin-bottom: 8px; min-height: 17px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>COLAP</h1>
+    <div class="sub">v0.1 — cola + pila de pendientes · triage con IA local</div>
+  </div>
+  <div class="controls">
+    <span class="lbl">Modo</span>
+    <div class="toggle" id="modeToggle">
+      <button data-m="lifo" title="Última en llegar = primera en salir">Pila LIFO</button>
+      <button data-m="sjf" title="Primero lo más corto estimado">SJF ⚡</button>
+      <button data-m="prioridad" title="Por nivel de urgencia">Prioridad</button>
+    </div>
+    <span class="lbl">Auto-triage</span>
+    <label class="sw"><input type="checkbox" id="autoTriage"><span></span></label>
+    <span class="pill" id="ollama-pill" title="Estado de Ollama (triage IA)">…</span>
+  </div>
+</header>
+
+<form class="nueva" id="nueva">
+  <input name="title" placeholder="¿Qué pendiente llegó? (título)" required autocomplete="off">
+  <input name="desc" placeholder="Detalles opcionales — el triage los usa para estimar" autocomplete="off">
+  <button class="cta" type="submit">Apilar ▼</button>
+</form>
+
+<div class="statsbar">
+  <div class="stat" id="stat-queued"><b>0</b><span>en cola</span></div>
+  <div class="stat" id="stat-today"><b>0</b><span>listas hoy</span></div>
+  <div class="stat" id="stat-total"><b>0</b><span>total listas</span></div>
+  <div class="stat" id="stat-avg"><b>0</b><span>min est. / tarea</span></div>
+</div>
+
+<div class="grid">
+  <section class="col">
+    <h2>Cola activa <span class="badge-n" id="q-n">0</span></h2>
+    <div class="modehint" id="modehint"></div>
+    <div id="queue"><div class="empty">Nada en la pila. Apila algo ✍️</div></div>
+  </section>
+  <section class="col">
+    <h2>Repositorio de tareas listas <span class="badge-n" id="d-n">0</span></h2>
+    <div class="hint">Un pendiente al completarse sale de la cola y queda archivado aquí.</div>
+    <div id="donelist"><div class="empty">Aún no hay tareas listas.</div></div>
+  </section>
+</div>
+
+<script>
+const modeHints = {
+  lifo: "Pila LIFO: la última tarea en llegar es el tope (la de arriba). Bien para lo reciente.",
+  sjf: "SJF: la cola se ordena por duración estimada. Despeja los pendientes cortos primero.",
+  prioridad: "Prioridad: urgencias suben al tope; dentro del mismo nivel, gana lo más reciente."
+};
+const esc = s => (s || "").replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const prioName = { 1: "alta", 2: "media", 3: "baja" };
+const srcName = { ia: "IA", heuristica: "est. heurística", manual: "manual" };
+
+async function api(method, url, body) {
+  const r = await fetch(url, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    alert("Error: " + (e.detail || r.status));
+    throw new Error(e.detail || r.status);
+  }
+  return r.json();
+}
+
+function tagsHTML(t) {
+  const ia = `<span class="tag ${t.source === "ia" ? "ia" : ""}">${srcName[t.source] || t.source}</span>`;
+  return `${ia}
+    <span class="tag p${t.priority}">p. ${prioName[t.priority]}</span>
+    <span class="tag">${t.est_minutes} min</span>
+    ${t.category ? `<span class="tag">${esc(t.category)}</span>` : ""}`;
+}
+
+function taskCard(t, top, n) {
+  return `<div class="card ${top ? "top" : "stacked"}">
+    <div class="row1">
+      <div class="title">${top ? "⬆ tope · " : `${n} · `}${esc(t.title)}</div>
+    </div>
+    ${t.description ? `<div class="desc">${esc(t.description)}</div>` : ""}
+    <div class="meta">${tagsHTML(t)}</div>
+    <div class="acts">
+      <button class="done" onclick="completar(${t.id}, this)">✔ Completar</button>
+      <button class="tri" onclick="triar(${t.id}, this)">✦ Triar</button>
+      <button onclick="editarMin(${t.id})" title="Ajustar estimación">~min</button>
+      <button class="del" onclick="borrar(${t.id})" title="Eliminar">✕</button>
+    </div>
+  </div>`;
+}
+
+let STATE = null;
+
+function render() {
+  const { settings, queue, done, stats, ollama } = STATE;
+  document.querySelectorAll("#modeToggle button")
+    .forEach(b => b.classList.toggle("on", b.dataset.m === settings.mode));
+  document.getElementById("modehint").textContent = modeHints[settings.mode] || "";
+  document.getElementById("autoTriage").checked = settings.auto_triage === "1";
+  const pill = document.getElementById("ollama-pill");
+  pill.textContent = { ok: "✦ Ollama lista", indisponible: "✦ Ollama: no responde" }[ollama]
+    || (ollama.startsWith("falta-modelo") ? "✦ Ollama: " + ollama.slice(13) : ollama);
+  pill.className = "pill " + (ollama === "ok" ? "ok" : "bad");
+
+  for (const [id, k] of [["stat-queued", "queued"], ["stat-today", "done_today"],
+      ["stat-total", "done_total"], ["stat-avg", "avg_est"]])
+    document.getElementById(id).querySelector("b").textContent = stats[k];
+
+  document.getElementById("q-n").textContent = queue.length;
+  document.getElementById("d-n").textContent = done.length;
+
+  document.getElementById("queue").innerHTML = queue.length
+    ? (queue.length > 10 ? queue.slice(0, 10).map((t, i) => taskCard(t, i === 0, i + 1)).join("")
+        + `<div class="empty">… y ${queue.length - 10} más abajo en la pila</div>`
+      : queue.map((t, i) => taskCard(t, i === 0, i + 1)).join(""))
+    : `<div class="empty">Nada en la pila. Apila algo ✍️</div>`;
+
+  document.getElementById("donelist").innerHTML = done.length
+    ? done.map(d => `<div class="done-item">
+        <span class="t">${esc(d.title)}</span>
+        <span class="when">${(d.done_at || "").replace("T", " ").slice(0, 16)}</span></div>`).join("")
+    : `<div class="empty">Aún no hay tareas listas.</div>`;
+}
+
+async function load() {
+  STATE = await api("GET", "/api/state");
+  render();
+}
+
+window.completar = async (id, btn) => {
+  btn.classList.add("spin");
+  await api("POST", `/api/tasks/${id}/complete`);
+  load();
+};
+window.triar = async (id, btn) => {
+  btn.textContent = "✦ …"; btn.classList.add("spin");
+  await api("POST", `/api/tasks/${id}/triage`);
+  load();
+};
+window.borrar = id => { if (confirm("¿Eliminar definitivamente?")) api("DELETE", `/api/tasks/${id}`).then(load); };
+window.editarMin = async id => {
+  const t = STATE.queue.find(x => x.id === id);
+  const v = prompt("Duración estimada en minutos (5–480):", t?.est_minutes ?? 30);
+  if (v !== null) { await api("PATCH", `/api/tasks/${id}`, { est_minutes: parseInt(v, 10) }); load(); }
+};
+
+document.getElementById("nueva").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const btnTxt = f.querySelector("button").textContent;
+  f.querySelector("button").textContent = "⏳";            // triage en curso…
+  try {
+    await api("POST", "/api/tasks", { title: f.title.value.trim(), description: f.desc.value.trim() });
+    f.reset(); f.title.focus();
+  } finally { f.querySelector("button").textContent = btnTxt; }
+  load();
+});
+
+document.getElementById("modeToggle").addEventListener("click", async (e) => {
+  const m = e.target.dataset?.m;
+  if (m) { await api("POST", "/api/settings", { mode: m }); load(); }
+});
+document.getElementById("autoTriage").addEventListener("change", async (e) => {
+  await api("POST", "/api/settings", { auto_triage: e.target.checked });
+});
+
+load();
+setInterval(load, 60000);          // refresco pasivo por si la pila cambió en otro sitio
+</script>
+</body>
+</html>

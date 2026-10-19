@@ -1,0 +1,28 @@
+services:
+  colap:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Usar el servicio ollama incluido en este compose:
+      - OLLAMA_URL=http://ollama:11434
+      # Si ya tienes Ollama en el host, comenta la línea de arriba y usa:
+      # - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=llama3.2:3b
+    volumes:
+      - ./data:/data
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    # Exponer Ollama al host solo si quieres reutilizarlo con otras apps:
+    # ports:
+    #   - "11434:11434"
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

@@ -1,0 +1,17 @@
+# entorno de datos (SQLite local) y virtual
+data/
+*.db
+*.db-wal
+*.db-shm
+.venv/
+venv/
+
+# python
+__pycache__/
+*.pyc
+
+# sistema / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
