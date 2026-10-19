@@ -1,4 +1,4 @@
-# Colap — cola + pila de pendientes con triage IA local
+# Colap — cola + pila de pendientes LIFO/SJF/SRTF con triage IA local
 
 Organizador de tareas diarias inspirado en estructuras de datos y algoritmos
 de planificación de Sistemas Operativos:
@@ -7,6 +7,10 @@ de planificación de Sistemas Operativos:
   primero que se suelta (`push` / `pop`).
 - **SJF (Shortest Job First)** — la cola se reordena y primero se ejecuta el
   pendiente con menor duración estimada (mínimo tiempo de espera promedio).
+- **SRTF (Shortest Remaining Time First, preeemptivo)** — eliges una tarea
+  "⚔ en curso"; si llega un pendiente más corto que lo restante del actual,
+  lo interrumpe automáticamente: el interrumpido vuelve a la cola conservando
+  su tiempo restante (`estimado − trabajado`, acreditado al pausar o terminar).
 - **Prioridad** — urgencias al tope; dentro del mismo nivel, LIFO.
 - **Repositorio de tareas listas** — al completarse, el pendiente sale de la
   cola y se archiva con su marca de tiempo.
@@ -73,6 +77,8 @@ El origen del triage queda etiquetado en la tarjeta: **IA** (Ollama),
 | `POST` | `/api/tasks`              | Apilar tarea `{title, description}` |
 | `PATCH`| `/api/tasks/{id}`         | Editar estimación/prioridad/etc.    |
 | `POST` | `/api/tasks/{id}/complete`| Moverla al repositorio de listas.   |
+| `POST` | `/api/tasks/{id}/start`   | Ponerla ⚔ en curso (interrumpe otra). |
+| `POST` | `/api/tasks/{id}/pause`   | Volverla a la cola con su restante.  |
 | `POST` | `/api/tasks/{id}/triage`  | Recalcular con IA.                  |
 | `DELETE`| `/api/tasks/{id}`        | Eliminar.                           |
 | `POST` | `/api/settings`           | `{mode: lifo\|sjf\|prioridad}` o `{auto_triage: bool}` |
@@ -83,6 +89,8 @@ El origen del triage queda etiquetado en la tarjeta: **IA** (Ollama),
   despejar pendientes cortos libera espacio mental rápido.
 - **¿Por qué LIFO?** Las tareas recientes suelen tener contexto fresco; la
   filosofía "push/pop" desalienta el acumular sin procesar.
-- El triage es **preeemptivo en la cola, no en tu pantalla**: si entra algo más
-  corto, pasa al tope al conmutar a SJF — tú decides si cambias de tarea.
+- **¿Por qué SRTF preeemptivo?** Interrumpir el "trabajo largo en curso" por
+  pendientes cortos minimiza el tiempo de espera total — pero tú decides
+  arrancar cada tarea; la preención solo reordena, jamás descarta trabajo
+  (el interrumpido conserva su tiempo restante).
 - Un solo archivo de datos, sin cuentas, sin nube. Backups = copiar `data/`.

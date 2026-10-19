@@ -2,17 +2,28 @@
 
 # ------------------------------------------------------------ scheduling ----
 
+def restante(t: dict) -> int:
+    """Minutos restantes estimados (SRTF): total - trabajo acreditado."""
+    return max(0, int(t["est_minutes"]) - int(t.get("spent_minutes", 0)))
+
+
 def order_queue(tasks: list[dict], mode: str) -> list[dict]:
-    """Devuelve la cola lista para visualizar.
+    """Devuelve la cola lista para visualizar (excluye la tarea en curso).
 
     LIFO      : la última tarea en llegar es el tope de la pila (primero).
     SJF       : el pendiente con menor duración estimada va primero.
+    SRTF      : como SJF pero preeemptivo — usa tiempo RESTANTE; si llega
+                algo más corto que la tarea en curso, esta regresa a la cola.
     prioridad : alfabético por urgencia; dentro de mismo nivel, LIFO.
     """
     if mode == "sjf":
         return sorted(
             tasks,
             key=lambda t: (t["est_minutes"], t["priority"], -t["id"]))
+    if mode == "srtf":
+        return sorted(
+            tasks,
+            key=lambda t: (restante(t), t["priority"], -t["id"]))
     if mode == "prioridad":
         return sorted(
             tasks,
@@ -21,7 +32,12 @@ def order_queue(tasks: list[dict], mode: str) -> list[dict]:
     return sorted(tasks, key=lambda t: -t["id"])
 
 
-MODES = {"lifo", "sjf", "prioridad"}
+MODES = {"lifo", "sjf", "srtf", "prioridad"}
+
+
+def debe_preeemptir(current: dict | None, nueva_est: int) -> bool:
+    """SRTF: la nueva tarea roba el 'CPU' si es más corta que lo restante."""
+    return current is not None and nueva_est < restante(current)
 
 
 # ------------------------------------------------------------ triage IA ----

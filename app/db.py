@@ -16,22 +16,35 @@ DEFAULT_SETTINGS = {"mode": "lifo", "auto_triage": "1"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    title       TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    category    TEXT NOT NULL DEFAULT '',
-    est_minutes INTEGER NOT NULL DEFAULT 30,
-    priority    INTEGER NOT NULL DEFAULT 2,   -- 1 alta, 2 media, 3 baja
-    status      TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'done')),
-    source      TEXT NOT NULL DEFAULT 'manual', -- manual | ia | heuristica
-    created_at  TEXT NOT NULL,
-    done_at     TEXT
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    title         TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    category      TEXT NOT NULL DEFAULT '',
+    est_minutes   INTEGER NOT NULL DEFAULT 30,
+    spent_minutes INTEGER NOT NULL DEFAULT 0,   -- trabajo ya acreditado (SRTF)
+    priority      INTEGER NOT NULL DEFAULT 2,   -- 1 alta, 2 media, 3 baja
+    status        TEXT NOT NULL DEFAULT 'queued'
+                  CHECK (status IN ('queued', 'in_progress', 'done')),
+    source        TEXT NOT NULL DEFAULT 'manual', -- manual | ia | heuristica
+    created_at    TEXT NOT NULL,
+    started_at    TEXT,                          -- cuando quedó 'en curso'
+    done_at       TEXT
 );
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
 """
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Columnas nuevas en bases creadas con versiones anteriores."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+    if "spent_minutes" not in cols:
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN spent_minutes INTEGER NOT NULL DEFAULT 0")
+    if "started_at" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN started_at TEXT")
 
 
 def now_iso() -> str:
@@ -51,6 +64,7 @@ def init_db() -> None:
     _conn = _connect()
     with _write_lock:
         _conn.executescript(SCHEMA)
+        _migrate(_conn)
         for k, v in DEFAULT_SETTINGS.items():
             _conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
@@ -109,6 +123,50 @@ def delete_task(tid: int) -> None:
     with _write_lock:
         _check().execute("DELETE FROM tasks WHERE id = ?", (tid,))
         _conn.commit()
+
+
+# --------------------------------------------------------- SRTF: en curso ---
+
+def set_running(tid: int) -> None:
+    """Pone una tarea 'en curso' (solo puede existir una)."""
+    with _write_lock:
+        _check().execute("UPDATE tasks SET started_at = ? WHERE id = ?",
+                         (now_iso(), tid))
+        _conn.commit()
+
+
+def get_in_progress() -> dict | None:
+    row = _check().execute(
+        "SELECT * FROM tasks WHERE status = 'in_progress' LIMIT 1").fetchone()
+    return dict(row) if row else None
+
+
+def accrue(tid: int) -> None:
+    """Acredita en spent_minutes el tiempo trabajado desde started_at."""
+    t = get_task(tid)
+    if t is None or not t["started_at"]:
+        return
+    inicio = datetime.fromisoformat(t["started_at"])
+    minutos = int((datetime.now(inicio.tzinfo) - inicio).total_seconds() // 60)
+    with _write_lock:
+        _check().execute(
+            "UPDATE tasks SET spent_minutes = spent_minutes + ?,"
+            " started_at = NULL WHERE id = ?",
+            (max(0, minutos), tid))
+        _conn.commit()
+
+
+# ---------------------------------------------------------- avisos (UI) ----
+
+def set_notice(texto: str) -> None:
+    set_setting("notice", texto)
+
+
+def pop_notice() -> str | None:
+    n = get_settings().get("notice") or None
+    if n:
+        set_notice("")
+    return n
 
 
 def queued_tasks() -> list[dict]:

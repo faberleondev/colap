@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import db, triage
-from .core import MODES, order_queue
+from .core import MODES, debe_preeemptir, order_queue, restante
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -51,12 +51,17 @@ def index():
 async def estado():
     settings = db.get_settings()
     mode = settings["mode"]
+    current = db.get_in_progress()
+    if current:
+        current["restante"] = restante(current)
     return {
         "settings": settings,
+        "current": current,                                   # ⚔ en curso
         "queue": order_queue(db.queued_tasks(), mode),
         "done": db.done_tasks(),
         "stats": db.stats(),
         "ollama": await triage.estado_ollama(),
+        "notice": db.pop_notice(),
     }
 
 
@@ -68,13 +73,26 @@ async def crear(t: TareaIn):
     if settings.get("auto_triage") == "1":
         triaged = await triage.triar(t.title, t.description)
         source = triaged.get("source", "manual")
+    est = (triaged or {}).get("est_minutes", 30)
     tid = db.insert_task(
         t.title, t.description,
         category=(triaged or {}).get("category", ""),
-        est_minutes=(triaged or {}).get("est_minutes", 30),
+        est_minutes=est,
         priority=(triaged or {}).get("priority", 2),
         source=source)
-    return db.get_task(tid)
+    # SRTF: si al llegar algo más corto que lo restante del actual, roba el CPU
+    preempted = None
+    if settings["mode"] == "srtf":
+        current = db.get_in_progress()
+        if debe_preeemptir(current, est):
+            db.accrue(current["id"])
+            db.set_status(current["id"], "queued")
+            db.set_running(tid)
+            preempted = {"id": current["id"], "title": current["title"]}
+            db.set_notice(
+                f"⚔ Preempted «{current['title']}» (quedan "
+                f"{restante(current)} min) — en curso: «{t.title}»")
+    return {"tarea": db.get_task(tid), "preempted": preempted}
 
 
 @app.patch("/api/tasks/{tid}")
@@ -96,10 +114,40 @@ async def retriajar(tid: int):
     return db.get_task(tid)
 
 
+@app.post("/api/tasks/{tid}/start")
+async def empezar(tid: int):
+    t = db.get_task(tid)
+    if t is None:
+        raise HTTPException(404, "Tarea no existe")
+    if t["status"] == "done":
+        raise HTTPException(400, "Esa tarea ya está lista")
+    current = db.get_in_progress()
+    if current and current["id"] != tid:      # solo una en curso
+        db.accrue(current["id"])
+        db.set_status(current["id"], "queued")
+    if t["status"] != "in_progress":
+        db.set_status(tid, "in_progress")
+        db.set_running(tid)
+    return db.get_task(tid)
+
+
+@app.post("/api/tasks/{tid}/pause")
+async def pausar(tid: int):
+    t = db.get_task(tid)
+    if t is None or t["status"] != "in_progress":
+        raise HTTPException(400, "La tarea no está en curso")
+    db.set_status(tid, "queued")
+    db.accrue(tid)
+    return db.get_task(tid)
+
+
 @app.post("/api/tasks/{tid}/complete")
 async def completar(tid: int):
-    if db.get_task(tid) is None:
+    t = db.get_task(tid)
+    if t is None:
         raise HTTPException(404, "Tarea no existe")
+    if t["status"] == "in_progress":          # acredita el trabajo hecho
+        db.accrue(tid)
     db.set_status(tid, "done")
     return db.get_task(tid)
 

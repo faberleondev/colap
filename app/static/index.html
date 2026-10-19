@@ -88,6 +88,14 @@
   .acts button.del:hover { color: var(--err); border-color: var(--err); }
   .acts button.spin { opacity: .5; pointer-events: none; }
   .card.stacked { opacity: .82; }
+  .card.running { background: linear-gradient(160deg, #23283a, #1a1e2b);
+    border: 1px solid var(--warn); margin-bottom: 14px; padding: 18px;
+    box-shadow: 0 6px 24px rgba(255,180,84,.12); }
+  .card.running .title { color: var(--warn); }
+  .banner { background: color-mix(in srgb, var(--warn) 15%, var(--panel));
+    border: 1px solid var(--warn); border-radius: var(--r); padding: 10px 14px;
+    margin-bottom: 12px; font-size: 13px; color: var(--warn); }
+  .minrest { font-weight: 700; color: var(--text); }
   .done-item { border-left: 3px solid var(--ok); padding: 8px 12px;
                background: var(--panel); border-radius: 8px; margin-bottom: 7px; }
   .done-item .t { text-decoration: line-through; color: var(--dim); font-size: 14px; }
@@ -106,6 +114,7 @@
     <div class="toggle" id="modeToggle">
       <button data-m="lifo" title="Última en llegar = primera en salir">Pila LIFO</button>
       <button data-m="sjf" title="Primero lo más corto estimado">SJF ⚡</button>
+      <button data-m="srtf" title="Como SJF pero preeemptivo: si llega algo más corto, interrumpe">SRTF ⚔</button>
       <button data-m="prioridad" title="Por nivel de urgencia">Prioridad</button>
     </div>
     <span class="lbl">Auto-triage</span>
@@ -119,6 +128,8 @@
   <input name="desc" placeholder="Detalles opcionales — el triage los usa para estimar" autocomplete="off">
   <button class="cta" type="submit">Apilar ▼</button>
 </form>
+
+<div class="banner" id="banner" hidden></div>
 
 <div class="statsbar">
   <div class="stat" id="stat-queued"><b>0</b><span>en cola</span></div>
@@ -144,6 +155,7 @@
 const modeHints = {
   lifo: "Pila LIFO: la última tarea en llegar es el tope (la de arriba). Bien para lo reciente.",
   sjf: "SJF: la cola se ordena por duración estimada. Despeja los pendientes cortos primero.",
+  srtf: "SRTF ⚔: preeemptivo. Pulsa 'Iniciar' en una tarea (queda ⚔ en curso); si llega un pendiente más corto que lo restante, interrumpe la actual y la devuelve a la cola.",
   prioridad: "Prioridad: urgencias suben al tope; dentro del mismo nivel, gana lo más reciente."
 };
 const esc = s => (s || "").replace(/[&<>"']/g, c =>
@@ -165,12 +177,17 @@ async function api(method, url, body) {
   return r.json();
 }
 
-function tagsHTML(t) {
+function prioTag(t) {
+  return `<span class="tag p${t.priority}">p. ${prioName[t.priority]}</span>`;
+}
+function tagsExtras(t) {
   const ia = `<span class="tag ${t.source === "ia" ? "ia" : ""}">${srcName[t.source] || t.source}</span>`;
-  return `${ia}
-    <span class="tag p${t.priority}">p. ${prioName[t.priority]}</span>
-    <span class="tag">${t.est_minutes} min</span>
-    ${t.category ? `<span class="tag">${esc(t.category)}</span>` : ""}`;
+  return `${ia}${t.category ? ` <span class="tag">${esc(t.category)}</span>` : ""}`;
+}
+function minsHTML(t) {
+  const restante = Math.max(0, t.est_minutes - (t.spent_minutes || 0));
+  const lbl = (t.spent_minutes || 0) > 0 ? "min rest." : "min";
+  return `<span class="tag">${restante} ${lbl}</span>`;
 }
 
 function taskCard(t, top, n) {
@@ -179,9 +196,10 @@ function taskCard(t, top, n) {
       <div class="title">${top ? "⬆ tope · " : `${n} · `}${esc(t.title)}</div>
     </div>
     ${t.description ? `<div class="desc">${esc(t.description)}</div>` : ""}
-    <div class="meta">${tagsHTML(t)}</div>
+    <div class="meta">${tagsExtras(t)} ${prioTag(t)} ${minsHTML(t)}</div>
     <div class="acts">
       <button class="done" onclick="completar(${t.id}, this)">✔ Completar</button>
+      <button onclick="empezar(${t.id}, this)">▶ Iniciar</button>
       <button class="tri" onclick="triar(${t.id}, this)">✦ Triar</button>
       <button onclick="editarMin(${t.id})" title="Ajustar estimación">~min</button>
       <button class="del" onclick="borrar(${t.id})" title="Eliminar">✕</button>
@@ -189,10 +207,33 @@ function taskCard(t, top, n) {
   </div>`;
 }
 
+function runningCard(t) {
+  const restante = Math.max(0, t.est_minutes - (t.spent_minutes || 0));
+  const hecho = t.spent_minutes || 0;
+  return `<div class="card running">
+    <div class="row1"><div class="title">⚔ En curso — ${esc(t.title)}</div></div>
+    ${t.description ? `<div class="desc">${esc(t.description)}</div>` : ""}
+    <div class="meta">
+      <span class="minrest">${restante} min restantes</span>
+      <span class="tag">${hecho} min trabajados</span>
+      ${tagsExtras(t)} ${prioTag(t)}
+    </div>
+    <div class="acts">
+      <button class="done" onclick="completar(${t.id}, this)">✔ Terminar</button>
+      <button onclick="pausar(${t.id}, this)">⏸ Pausar</button>
+      <button class="tri" onclick="triar(${t.id}, this)">✦ Triar</button>
+      <button class="del" onclick="borrar(${t.id})">✕</button>
+    </div>
+  </div>`;
+}
+
 let STATE = null;
 
 function render() {
-  const { settings, queue, done, stats, ollama } = STATE;
+  const { settings, queue, done, stats, ollama, current, notice } = STATE;
+  const bannerEl = document.getElementById("banner");
+  bannerEl.hidden = !notice;
+  if (notice) bannerEl.textContent = notice;
   document.querySelectorAll("#modeToggle button")
     .forEach(b => b.classList.toggle("on", b.dataset.m === settings.mode));
   document.getElementById("modehint").textContent = modeHints[settings.mode] || "";
@@ -209,11 +250,13 @@ function render() {
   document.getElementById("q-n").textContent = queue.length;
   document.getElementById("d-n").textContent = done.length;
 
-  document.getElementById("queue").innerHTML = queue.length
-    ? (queue.length > 10 ? queue.slice(0, 10).map((t, i) => taskCard(t, i === 0, i + 1)).join("")
-        + `<div class="empty">… y ${queue.length - 10} más abajo en la pila</div>`
-      : queue.map((t, i) => taskCard(t, i === 0, i + 1)).join(""))
-    : `<div class="empty">Nada en la pila. Apila algo ✍️</div>`;
+  document.getElementById("queue").innerHTML =
+    (current ? runningCard(current) : "")
+    + (queue.length
+      ? (queue.length > 10 ? queue.slice(0, 10).map((t, i) => taskCard(t, i === 0 && !current, i + 1)).join("")
+          + `<div class="empty">… y ${queue.length - 10} más abajo en la pila</div>`
+        : queue.map((t, i) => taskCard(t, i === 0 && !current, i + 1)).join(""))
+      : `<div class="empty">${current ? "" : "Nada en la pila. Apila algo ✍️"}</div>`);
 
   document.getElementById("donelist").innerHTML = done.length
     ? done.map(d => `<div class="done-item">
@@ -230,6 +273,16 @@ async function load() {
 window.completar = async (id, btn) => {
   btn.classList.add("spin");
   await api("POST", `/api/tasks/${id}/complete`);
+  load();
+};
+window.pausar = async (id, btn) => {
+  btn.classList.add("spin");
+  await api("POST", `/api/tasks/${id}/pause`);
+  load();
+};
+window.empezar = async (id, btn) => {
+  btn.classList.add("spin");
+  await api("POST", `/api/tasks/${id}/start`);
   load();
 };
 window.triar = async (id, btn) => {
