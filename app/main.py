@@ -12,7 +12,7 @@ from .core import MODES, debe_preeemptir, order_queue, restante
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
-app = FastAPI(title="Colap", version="0.1.0")
+app = FastAPI(title="Colap", version="0.2.1")
 STATIC_DIR = Path(__file__).parent / "static"
 
 
