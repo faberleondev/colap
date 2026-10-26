@@ -57,6 +57,19 @@ el triage IA funciona de inmediato. Si no, la app usa el triaje heurístico.
 | `OLLAMA_MODEL`   | `llama3.2:3b`           | Modelo usado para el triage.      |
 | `OLLAMA_TIMEOUT` | `60`                    | Segundos máximos por triage.      |
 
+## Rama experimental `dev`
+
+La rama `dev` prueba funcionalidades en camino antes de fusionarse a `main`:
+
+- **Dictado por voz (MVP)** — botón 🎤 junto al formulario: dicta la tarea y
+  entra a la pila con triage IA automático. Usa la Web Speech API nativa de
+  Edge/Chrome en español, sin dependencias nuevas.
+  - *Futura 100% offline*: service médico `faster-whisper` local como
+    sidecar — en cuanto el dictado nativo no alcance.
+- Nota: el dictado nativo del navegador procesa el audio en los servicios
+  de voz del propio navegador; para privacidad estricta total, integrar
+  la alternativa `faster-whisper` local mencionada arriba.
+
 ## Cómo funciona el triage
 
 Cada tarea nueva (o el botón **✦ Triar**) envía el título/detalles al LLM, que
