@@ -112,7 +112,7 @@
 <header>
   <div>
     <h1>COLAP</h1>
-    <div class="sub">v0.1 — cola + pila de pendientes · triage con IA local</div>
+    <div class="sub">v0.2.1 — cola + pila de pendientes · triage IA local · dictado con respaldo offline</div>
   </div>
   <div class="controls">
     <span class="lbl">Modo</span>
@@ -316,35 +316,85 @@ document.getElementById("nueva").addEventListener("submit", async (e) => {
   load();
 });
 
-// ------------------------------------------------ dictado por voz (MVP) ---
-// Usa la Web Speech API del navegador (Edge/Chrome, español). Al terminar
-// la frase dictada: transcripción -> título -> triage IA -> a la pila.
-// Pendiente (100% offline): servicio local faster-whisper como sidecar.
+// ------------------------------------------------ dictado por voz v0.2.1 ---
+// Vía 1 — Web Speech API nativa del navegador (Edge/Chrome, español).
+// Vía 2 — respaldo local: graba con MediaRecorder y transcribe en el servidor
+//         con faster-whisper (/api/voice). Se activa sola si la vía nativa
+//         falla con 'network' o el navegador no soporta SpeechRecognition.
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const micBtn = document.getElementById("mic");
 const micStatus = document.getElementById("micStatus");
 
-if (!SR) {
-  micBtn.hidden = true;
-  micStatus.textContent =
-    "🎤 Este navegador no soporta dictado nativo — usa Edge o Chrome.";
-} else {
+const micParla = s => { micStatus.textContent = s; };
+
+// apila el texto dictado: título → triage IA → cola
+function apilarTexto(txt) {
+  const f = document.getElementById("nueva");
+  f.title.value = txt.charAt(0).toUpperCase() + txt.slice(1);
+  micParla(`✓ Dictado: «${txt}» — apilando…`);
+  f.dispatchEvent(new Event("submit", { cancelable: true }));
+}
+
+// ------------------------------------------------ vía 2: respaldo local ---
+let modoVoz = (SR || navigator.mediaDevices?.getUserMedia) ? null : "no";
+let grabadora = null, trozos = [];
+
+function detenerGrabacion() { if (grabadora && grabadora.state !== "inactive") grabadora.stop(); }
+
+async function iniciarGrabacionLocal() {
+  try {
+    const flujo = await navigator.mediaDevices.getUserMedia({ audio: true });
+    trozos = [];
+    grabadora = new MediaRecorder(flujo);
+    grabadora.ondataavailable = e => trozos.push(e.data);
+    grabadora.onstop = async () => {
+      flujo.getTracks().forEach(t => t.stop());
+      micBtn.classList.remove("rec");
+      micParla("… transcribiendo localmente (faster-whisper)…");
+      const fd = new FormData();
+      const tipo = grabadora.mimeType || "audio/webm";
+      fd.append("archivo", new Blob(trozos, { type: tipo }), `dictado.${tipo.includes("ogg") ? "ogg" : "webm"}`);
+      const r = await fetch("/api/voice", { method: "POST", body: fd });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        micParla("🎤 " + (e.detail || "No se pudo transcribir el dictado local (" + r.status + ")"));
+        return;
+      }
+      const { texto } = await r.json();
+      if (texto.trim()) apilarTexto(texto.trim());
+      else micParla("🎤 El dictado local no captó palabras — intenta de nuevo.");
+    };
+    grabadora.start();
+    micBtn.classList.add("rec");
+    micParla("🎙 Grabando (modo local 🛡)… pulsa 🎤 de nuevo para terminar");
+  } catch (e) {
+    micParla("🎤 No se pudo acceder al micrófono: " + (e.message || e.name));
+  }
+}
+
+// ------------------------------------------------ vía 1: dictado nativo ---
+if (SR) {
   const rec = new SR();
   rec.lang = (navigator.languages && navigator.languages[0]) || "es-ES";
   rec.interimResults = true;
   rec.continuous = false;
   let textoFinal = "";
 
-  const micParla = s => { micStatus.textContent = s; };
-
   rec.onstart = () => { micBtn.classList.add("rec"); micParla("🎙 Escuchando… di la tarea"); };
-  rec.onend = () => { micBtn.classList.remove("rec"); if (textoFinal) micParla(""); };
+  rec.onend = () => { micBtn.classList.remove("rec"); if (textoFinal.trim()) apilarTexto(textoFinal.trim()); };
 
   rec.onerror = (e) => {
     micBtn.classList.remove("rec");
-    micParla(e.error === "not-allowed"
-      ? "🎤 Permiso de micrófono denegado — actívalo en el candado de la barra del navegador."
-      : `🎤 Error de dictado: ${e.error}`);
+    if (e.error === "network") {
+      // fallback automático: dictado 100% local vía el servidor
+      micParla("🎤 Dictado nativo sin red — cambiando al dictado local 🛡…");
+      modoVoz = "local";
+      iniciarGrabacionLocal();
+    } else {
+      micParla(e.error === "not-allowed"
+        ? "🎤 Permiso de micrófono denegado — actívalo en el candado de la barra."
+        : `🎤 Error de dictado: ${e.error}`);
+    }
   };
 
   rec.onresult = (ev) => {
@@ -357,20 +407,20 @@ if (!SR) {
   };
 
   micBtn.addEventListener("click", () => {
-    if (micBtn.classList.contains("rec")) { rec.stop(); return; }
+    if (micBtn.classList.contains("rec")) { modoVoz === "local" ? detenerGrabacion() : rec.stop(); return; }
+    if (modoVoz === "local") { iniciarGrabacionLocal(); return; }
     textoFinal = "";
     try { rec.start(); } catch (_) { /* ya iniciado */ }
   });
-
-  // al terminar el dictado: apilar directamente
-  rec.addEventListener("end", () => {
-    const txt = textoFinal.trim();
-    if (!txt) return;
-    const f = document.getElementById("nueva");
-    f.title.value = txt.charAt(0).toUpperCase() + txt.slice(1);
-    micParla(`✓ Dictado: «${txt}» — apilando…`);
-    f.dispatchEvent(new Event("submit", { cancelable: true }));
+} else if (navigator.mediaDevices?.getUserMedia) {
+  micBtn.addEventListener("click", () => {
+    if (micBtn.classList.contains("rec")) { detenerGrabacion(); return; }
+    iniciarGrabacionLocal();
   });
+  micParla("🎤 Sin dictado nativo en este navegador — listo el modo local 🛡");
+} else {
+  micBtn.hidden = true;
+  micParla("🎤 Este navegador no soporta dictado — usa Edge o Chrome.");
 }
 
 document.getElementById("modeToggle").addEventListener("click", async (e) => {

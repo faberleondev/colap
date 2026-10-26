@@ -1,8 +1,16 @@
-"""Colap — organizador de pendientes LIFO/SJF/prioridad con triage IA local."""
+"""Colap v0.2.1 — organizador de pendientes LIFO/SJF/SRTF con triage IA local.
+
+Dictado: Web Speech API nativa del navegador con respaldo local — si falla
+('network' o navegador sin soporte), el audio se graba y transcribe en el
+servidor con faster-whisper (100% offline, sin servicios externos).
+"""
 import logging
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -12,8 +20,20 @@ from .core import MODES, debe_preeemptir, order_queue, restante
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
+STT_MODEL = os.environ.get("STT_MODEL", "base")   # faster-whisper: tiny|base|small
+_whisper = None
+
 app = FastAPI(title="Colap", version="0.2.1")
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _whisper_cargar():
+    """Carga diferida del modelo de transcripción (solo si hay dictado local)."""
+    global _whisper
+    if _whisper is None:
+        from faster_whisper import WhisperModel
+        _whisper = WhisperModel(STT_MODEL, device="cpu", compute_type="int8")
+    return _whisper
 
 
 @app.on_event("startup")
@@ -158,6 +178,37 @@ async def eliminar(tid: int):
         raise HTTPException(404, "Tarea no existe")
     db.delete_task(tid)
     return {"ok": True}
+
+
+@app.post("/api/voice")
+async def voz(archivo: UploadFile = File(...)):
+    """Dictado local: audio (webm/opus o wav) → texto con faster-whisper.
+
+    Respaldo ante 'network' del dictado nativo del navegador, y para
+    navegadores sin Web Speech API. Privacidad: nada sale del equipo.
+    """
+    ext = os.path.splitext(archivo.filename or "audio.webm")[1] or ".webm"
+    tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+    try:
+        shutil.copyfileobj(archivo.file, tmp)
+        tmp.close()
+        try:
+            model = _whisper_cargar()
+        except ImportError:
+            raise HTTPException(
+                503, "Dictado local no instalado. Actívalo con: "
+                ".venv\\Scripts\\pip install faster-whisper  (o usa el dictado "
+                "nativo en Edge/Chrome)")
+        segmentos, _info = model.transcribe(tmp.name, language="es", beam_size=1)
+        texto = " ".join(s.text for s in segmentos).strip()
+        if not texto:
+            raise HTTPException(422, "No se entendió nada del dictado")
+        return {"texto": texto}
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
 
 
 @app.post("/api/settings")

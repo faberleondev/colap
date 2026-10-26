@@ -1,5 +1,7 @@
 # Colap — cola + pila de pendientes LIFO/SJF/SRTF con triage IA local
 
+**v0.2.1** · FastAPI + SQLite · IA local con Ollama · dictado por voz con respaldo offline · Licencia MIT
+
 Organizador de tareas diarias inspirado en estructuras de datos y algoritmos
 de planificación de Sistemas Operativos:
 
@@ -57,18 +59,33 @@ el triage IA funciona de inmediato. Si no, la app usa el triaje heurístico.
 | `OLLAMA_MODEL`   | `llama3.2:3b`           | Modelo usado para el triage.      |
 | `OLLAMA_TIMEOUT` | `60`                    | Segundos máximos por triage.      |
 
+## Licencia
+
+**MIT** — elegida tras evaluación:
+
+| Opción | Copyleft | Concesión de patentes | Ideal para |
+|---|---|---|---|
+| **MIT** ✅ | No | No explícita | Máxima simplicidad y adopción; ideal para herramientas personales y pequeñas |
+| Apache 2.0 | No | ✅ Sí | Proyectos con contribuciones empresariales o riesgo de patentes |
+| GPL-3.0 | Fuerte ✅ | Sí | Forzar que los derivados sigan siendo libres |
+
+Para Colap (herramienta de uso personal, autohospedada y de base pequeña)
+**MIT** es la indicada: cero fricción, compatible con cualquier futuro
+abrazo a Apache/GPL si el proyecto crece. Cambiar de licencia después
+requiere acuerdo de todos los contribuidores… hoy solo tienes tú 😉
+
 ## Rama experimental `dev`
 
 La rama `dev` prueba funcionalidades en camino antes de fusionarse a `main`:
 
-- **Dictado por voz (MVP)** — botón 🎤 junto al formulario: dicta la tarea y
-  entra a la pila con triage IA automático. Usa la Web Speech API nativa de
-  Edge/Chrome en español, sin dependencias nuevas.
-  - *Futura 100% offline*: service médico `faster-whisper` local como
-    sidecar — en cuanto el dictado nativo no alcance.
-- Nota: el dictado nativo del navegador procesa el audio en los servicios
-  de voz del propio navegador; para privacidad estricta total, integrar
-  la alternativa `faster-whisper` local mencionada arriba.
+- **Dictado por voz (v0.2.1)** — botón 🎤 junto al formulario: dicta la tarea y
+  entra a la pila con triage IA automático, con **doble vía de transcripción**:
+  1. *Nativa*: Web Speech API del navegador (Edge/Chrome, español).
+  2. *Local 🛡 (respaldo automático)*: si la nativa falla con `network` o el
+     navegador no la soporta, el audio se graba en el navegador y se
+     transcribe **en el servidor con faster-whisper** — 100% offline, nada
+     sale del equipo. Requiere `pip install faster-whisper` (modelo `base`).
+     Configurable con la variable de entorno `STT_MODEL` (tiny/base/small).
 
 ## Cómo funciona el triage
 
