@@ -12,7 +12,18 @@ DB_PATH = os.path.join(DATA_DIR, "despachapp.db")
 _conn: sqlite3.Connection | None = None
 _write_lock = threading.Lock()
 
-DEFAULT_SETTINGS = {"mode": "lifo", "auto_triage": "1"}
+DEFAULT_SETTINGS = {
+    "mode": "lifo",
+    "auto_triage": "1",
+    "stt_model": "base",       # tiny | base | small (dictado local)
+    "glosario": (              # correcciones del dictado (GUI ⚙ Ajustes)
+        "# Una corrección por línea: mal entendido => corrección\n"
+        "open media vowel=>OpenMediaVault\n"
+        "media vowel=>OpenMediaVault\n"
+        "open media vault=>OpenMediaVault\n"
+        "promox=>Proxmox\n"
+        "optiplex=>OptiPlex\n"),
+}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (

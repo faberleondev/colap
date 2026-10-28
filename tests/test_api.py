@@ -2,6 +2,7 @@
 import pytest
 
 import app.triage as triage
+from app import main
 from tests.conftest import _crear
 
 
@@ -128,6 +129,58 @@ def test_srtf_preemption_end_to_end(cliente, triage_falso):
     assert estado2["notice"] is None      # el primer pop ya se lo llevó
 
 
+# ----------------------------------------------- glosario de dictado
+
+def test_glosario_pares_orden_y_comentarios():
+    texto = ("# comentario\n"
+             "\n"
+             "media vowel=>OpenMediaVault\n"
+             "open media vowel=>OpenMediaVault\n"
+             "línea sin formato\n"
+             "promox=>Proxmox\n")
+    pares = main._glosario_parsear(texto)
+    # frases más largas primero, para que 'media vowel' no pise a la otra
+    assert pares[0][0] == "open media vowel"
+    assert len(pares) == 3
+    assert ("línea sin formato", "") not in pares
+
+
+def test_glosario_corrige_sin_mayusculas():
+    pares = main._glosario_parsear("open media vowel=>OpenMediaVault\n"
+                                   "media vowel=>OpenMediaVault")
+    assert main._corregir("Mantener el OPEN MEDIA VOWEL actualizado",
+                          pares) == "Mantener el OpenMediaVault actualizado"
+    # el par corto solo, sobre una frase que no lleva prefijo
+    solo = main._glosario_parsear("media vowel=>OpenMediaVault")
+    assert main._corregir("Actualizar el Media Vowel", solo) == \
+        "Actualizar el OpenMediaVault"
+
+
+def test_hotwords_sin_duplicados():
+    pares = main._glosario_parsear("a=>Proxmox\nb=>Proxmox\nc=>OptiPlex")
+    assert main._hotwords(pares) == "Proxmox, OptiPlex"
+
+
+def test_settings_glosario_y_stt_model(cliente):
+    r = cliente.post("/api/settings", json={
+        "stt_model": "small", "glosario": "promox=>Proxmox"})
+    assert r.json()["stt_model"] == "small"
+    assert "promox=>Proxmox" in r.json()["glosario"]
+    # visible en /api/state (así lo consume la GUI)
+    assert "promox=>Proxmox" in cliente.get("/api/state").json()["settings"]["glosario"]
+
+
+def test_settings_stt_model_invalido_400(cliente):
+    r = cliente.post("/api/settings", json={"stt_model": "gigante"})
+    assert r.status_code == 400
+
+
+def test_ajustes_default_tienen_glosario_y_stt(cliente):
+    s = cliente.get("/api/state").json()["settings"]
+    assert s["stt_model"] == "base"
+    assert "open media vowel" in s["glosario"]   # semillas precargadas
+
+
 # ------------------------------------------------------- errores y bordes
 
 def test_patch_tarea_inexistente_404(cliente):
@@ -140,10 +193,13 @@ def test_delete_tarea(cliente):
     assert cliente.get("/api/state").json()["queue"] == []
 
 
-def test_avisos_se_consumen_una_sola_vez(cliente):
+def test_avisos_se_consumen_una_sola_vez(cliente, triage_falso):
     cliente.post("/api/settings", json={"mode": "srtf", "auto_triage": True})
-    larga = cliente.post("/api/tasks", json={"title": "Larga", "description": ""}).json()["tarea"]
+    larga = cliente.post(  # triage falso → est 120
+        "/api/tasks", json={"title": "Tarea larga de migración",
+                            "description": ""}).json()["tarea"]
     cliente.post(f"/api/tasks/{larga['id']}/start")
-    cliente.post("/api/tasks", json={"title": "corta", "description": ""})
+    cliente.post("/api/tasks", json={"title": "Tarea corta de envío",  # est 5
+                                     "description": ""})
     assert "Preempted" in cliente.get("/api/state").json()["notice"]
     assert cliente.get("/api/state").json()["notice"] is None

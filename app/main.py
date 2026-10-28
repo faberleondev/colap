@@ -22,18 +22,26 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 STT_MODEL = os.environ.get("STT_MODEL", "base")   # faster-whisper: tiny|base|small
+# Modelos STT seleccionables desde la GUI (descripciones también en la UI)
+STT_MODELOS = ("tiny", "base", "small")
 _whisper = None
+_whisper_modelo = None
 
 app = FastAPI(title="DespachApp", version="0.2.1.2")
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def _whisper_cargar():
-    """Carga diferida del modelo de transcripción (solo si hay dictado local)."""
-    global _whisper
-    if _whisper is None:
+def _whisper_cargar(nombre: str | None = None):
+    """Carga diferida del modelo de transcripción (solo si hay dictado local).
+
+    Si `nombre` difiere del ya cargado (cambio desde Ajustes), recarga.
+    """
+    global _whisper, _whisper_modelo
+    nombre = nombre or STT_MODEL
+    if _whisper is None or _whisper_modelo != nombre:
         from faster_whisper import WhisperModel
-        _whisper = WhisperModel(STT_MODEL, device="cpu", compute_type="int8")
+        _whisper = WhisperModel(nombre, device="cpu", compute_type="int8")
+        _whisper_modelo = nombre
     return _whisper
 
 
@@ -59,6 +67,50 @@ class TareaPatch(BaseModel):
 class ConfigIn(BaseModel):
     mode: str | None = None
     auto_triage: bool | None = None
+    stt_model: str | None = None      # tiny | base | small
+    glosario: str | None = None       # correcciones del dictado, una por línea
+
+
+SEP_GLOSARIO = "=>"               # formato: palabra mal entendida => corrección
+
+# Semillas precargadas (hardware/stack del autor — editables desde la GUI)
+GLOSARIO_SEMILLA = (
+    "# Una corrección por línea, formato: mal entendido => corrección\n"
+    "open media vowel=>OpenMediaVault\n"
+    "media vowel=>OpenMediaVault\n"
+    "open media vault=>OpenMediaVault\n"
+    "promox=>Proxmox\n"
+    "optiplex=>OptiPlex\n"
+    "dell optiplex=>Dell OptiPlex\n"
+)
+
+
+def _glosario_parsear(texto: str) -> list[tuple[str, str]]:
+    """'mal=>bien' por línea → pares (mal, bien); ignora vacíos y #comentarios."""
+    pares = []
+    for linea in (texto or "").splitlines():
+        linea = linea.strip()
+        if not linea or linea.startswith("#") or SEP_GLOSARIO not in linea:
+            continue
+        mal, bien = linea.split(SEP_GLOSARIO, 1)
+        mal, bien = mal.strip(), bien.strip()
+        if mal and bien:
+            pares.append((mal, bien))
+    # las frases más largas primero ('open media vowel' antes que 'media vowel')
+    return sorted(pares, key=lambda p: -len(p[0]))
+
+
+def _corregir(texto: str, pares: list[tuple[str, str]]) -> str:
+    """Aplica el glosario al texto transcrito (sin distinguir mayúsculas)."""
+    for mal, bien in pares:
+        texto = re.sub(re.escape(mal), bien, texto, flags=re.IGNORECASE)
+    return texto
+
+
+def _hotwords(pares: list[tuple[str, str]]) -> str | None:
+    """Las correcciones sesgan al decodificador: son el vocabulario propio."""
+    termos = [bien for _, bien in pares]
+    return ", ".join(dict.fromkeys(termos)) or None
 
 
 # -------------------------------------------------------------------- API ---
@@ -210,21 +262,32 @@ async def voz(archivo: UploadFile = File(...)):
 
     Respaldo ante 'network' del dictado nativo del navegador, y para
     navegadores sin Web Speech API. Privacidad: nada sale del equipo.
+    El glosario de Ajustes sesga la transcripción (hotwords) y corrige
+    el resultado (pares mal=>bien).
     """
     ext = os.path.splitext(archivo.filename or "audio.webm")[1] or ".webm"
     tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
     try:
         shutil.copyfileobj(archivo.file, tmp)
         tmp.close()
+        settings = db.get_settings()
         try:
-            model = _whisper_cargar()
+            model = _whisper_cargar(settings.get("stt_model") or STT_MODEL)
         except ImportError:
             raise HTTPException(
                 503, "Dictado local no instalado. Actívalo con: "
                 ".venv\\Scripts\\pip install faster-whisper  (o usa el dictado "
                 "nativo en Edge/Chrome)")
-        segmentos, _info = model.transcribe(tmp.name, language="es", beam_size=1)
+        pares = _glosario_parsear(settings.get("glosario", ""))
+        calzo = _hotwords(pares)
+        prompt = ("Dictado en español de una tarea pendiente. "
+                  "Vocabulario técnico: " + (calzo or "informática, redes")
+                  if calzo else None)
+        segmentos, _info = model.transcribe(
+            tmp.name, language="es", beam_size=1,
+            hotwords=calzo, initial_prompt=prompt)
         texto = " ".join(s.text for s in segmentos).strip()
+        texto = _corregir(texto, pares)
         if not texto:
             raise HTTPException(422, "No se entendió nada del dictado")
         return {"texto": texto}
@@ -243,4 +306,10 @@ async def config(cfg: ConfigIn):
         db.set_setting("mode", cfg.mode)
     if cfg.auto_triage is not None:
         db.set_setting("auto_triage", "1" if cfg.auto_triage else "0")
+    if cfg.stt_model is not None:
+        if cfg.stt_model not in STT_MODELOS:
+            raise HTTPException(400, f"modelos STT válidos: {STT_MODELOS}")
+        db.set_setting("stt_model", cfg.stt_model)
+    if cfg.glosario is not None:
+        db.set_setting("glosario", cfg.glosario[:5000])
     return db.get_settings()

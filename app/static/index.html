@@ -106,6 +106,27 @@
   .done-item .t { text-decoration: line-through; color: var(--dim); font-size: 14px; }
   .done-item .when { font-size: 11px; color: var(--dim); margin-left: 6px; }
   .modehint { font-size: 12px; color: var(--acc); margin-bottom: 8px; min-height: 17px; }
+  /* ⚙ Ajustes de dictado */
+  #ajustes { background: var(--panel); border: 1px solid var(--line);
+             border-radius: var(--r); margin-bottom: 14px; }
+  #ajustes summary { cursor: pointer; padding: 10px 14px; color: var(--dim);
+                     font-size: 14px; user-select: none; }
+  #ajustes[open] summary { color: var(--text); border-bottom: 1px solid var(--line); }
+  .aj-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 18px;
+             padding: 14px; }
+  .aj-tit { display: block; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .aj-col .hint { font-size: 12px; }
+  label.stt { display: flex; gap: 8px; align-items: baseline; padding: 4px 0;
+              font-size: 13px; color: var(--dim); cursor: pointer; }
+  label.stt b { color: var(--text); }
+  label.stt input { accent-color: var(--acc); }
+  #glosario { width: 100%; font-family: Consolas, monospace; font-size: 13px;
+              resize: vertical; padding: 8px 10px; border-radius: 8px; }
+  .cta-mini { border: 1px solid var(--acc); background: transparent;
+              color: var(--acc); border-radius: 8px; padding: 6px 14px;
+              cursor: pointer; margin-top: 8px; font-size: 13px; }
+  .cta-mini:hover { background: var(--acc); color: #0b0d13; }
+  @media (max-width: 760px) { .aj-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -137,6 +158,28 @@
 <div class="hint" id="micStatus"></div>
 
 <div class="banner" id="banner" hidden></div>
+
+<details id="ajustes">
+  <summary>⚙ Ajustes de dictado</summary>
+  <div class="aj-grid">
+    <div class="aj-col">
+      <label class="aj-tit">Modelo de voz a texto — dictado local 🛡</label>
+      <label class="stt"><input type="radio" name="stt" value="tiny">
+        <span><b>tiny</b> — el más rápido y liviano; menos precisión. Para pruebas.</span></label>
+      <label class="stt"><input type="radio" name="stt" value="base">
+        <span><b>base</b> — equilibrado (recomendado). Buena relación velocidad/precisión.</span></label>
+      <label class="stt"><input type="radio" name="stt" value="small">
+        <span><b>small</b> — el más preciso; usa más CPU y tarda más en transcribir.</span></label>
+      <div class="hint">El cambio aplica al próximo dictado (recarga del modelo, unos segundos).</div>
+    </div>
+    <div class="aj-col">
+      <label class="aj-tit" for="glosario">Glosario propio — corrige lo que el motor confunde</label>
+      <textarea id="glosario" rows="6" spellcheck="false"></textarea>
+      <div class="hint">Una corrección por línea: <code>mal entendido =&gt; corrección</code>. Se aplica al dictado local y al nativo, y además sesga la transcripción con tus términos técnicos.</div>
+      <button type="button" class="cta-mini" id="guardarGlosario">Guardar glosario</button>
+    </div>
+  </div>
+</details>
 
 <div class="statsbar">
   <div class="stat" id="stat-queued"><b>0</b><span>en cola</span></div>
@@ -222,6 +265,24 @@ function runningCard(t) {
 
 let STATE = null;
 
+// glosario propio: corrige el texto de la vía nativa (la local ya lo hace
+// en el servidor). Formato por línea: mal entendido => corrección
+function corregirGlosario(txt) {
+  const pares = _glosarioPares();
+  if (!pares.length) return txt;
+  for (const [mal, bien] of pares)
+    txt = txt.replace(new RegExp(mal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), bien);
+  return txt;
+}
+function _glosarioPares() {
+  return (STATE?.settings?.glosario || "").split("\n")
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith("#") && l.includes("=>"))
+    .map(l => { const [mal, bien] = l.split("=>", 2); return [mal.trim(), bien.trim()]; })
+    .filter(([mal, bien]) => mal && bien)
+    .sort((a, b) => b[0].length - a[0].length);
+}
+
 function render() {
   const { settings, queue, done, stats, ollama, current, notice } = STATE;
   const bannerEl = document.getElementById("banner");
@@ -231,6 +292,15 @@ function render() {
     .forEach(b => b.classList.toggle("on", b.dataset.m === settings.mode));
   document.getElementById("modehint").textContent = modeHints[settings.mode] || "";
   document.getElementById("autoTriage").checked = settings.auto_triage === "1";
+
+  // ⚙ Ajustes de dictado: sincroniza solo si el usuario no está editando
+  const enAjustes = document.getElementById("ajustes").contains(document.activeElement);
+  if (!enAjustes) {
+    document.querySelectorAll('#ajustes input[name=stt]').forEach(r =>
+      r.checked = r.value === (settings.stt_model || "base"));
+    document.getElementById("glosario").value = settings.glosario || "";
+  }
+
   const pill = document.getElementById("ollama-pill");
   pill.textContent = { ok: "✦ Ollama lista", indisponible: "✦ Ollama: no responde" }[ollama]
     || (ollama.startsWith("falta-modelo") ? "✦ Ollama: " + ollama.slice(13) : ollama);
@@ -317,7 +387,8 @@ const micParla = s => { micStatus.textContent = s; };
 // El dictado puede venir largo (Brave a veces captura 2-3 frases): la
 // primera oración (o 200 caracteres) es el título; el resto va a detalles.
 function apilarTexto(txt) {
-  const limpio = (txt || "").replace(/\s+/g, " ").trim();
+  let limpio = (txt || "").replace(/\s+/g, " ").trim();
+  limpio = corregirGlosario(limpio);     // el glosario también corrige la vía nativa
   let frase = "";
   const punto = limpio.search(/[.!?]/);
   let resto = "";
@@ -451,6 +522,17 @@ document.getElementById("modeToggle").addEventListener("click", async (e) => {
 });
 document.getElementById("autoTriage").addEventListener("change", async (e) => {
   await api("POST", "/api/settings", { auto_triage: e.target.checked });
+});
+
+// ⚙ Ajustes de dictado
+document.querySelectorAll('#ajustes input[name=stt]').forEach(r =>
+  r.addEventListener("change", async () => {
+    if (r.checked) { await api("POST", "/api/settings", { stt_model: r.value }); load(); }
+  }));
+document.getElementById("guardarGlosario").addEventListener("click", async () => {
+  await api("POST", "/api/settings", { glosario: document.getElementById("glosario").value });
+  micParla("✓ Glosario guardado — se aplica al próximo dictado");
+  load();
 });
 
 load();
