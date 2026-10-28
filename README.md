@@ -123,10 +123,19 @@ flowchart LR
 
 ### Roadmap
 
-- [ ] Automated tests for the scheduling logic (SJF, SRTF, priority).
-- [ ] CI with GitHub Actions (lint, tests, Docker build).
+- [x] Automated tests for the scheduling logic (34: SJF/SRTF/LIFO/priority ordering, preemption E2E, API, triage fallback, voice).
+- [x] CI with GitHub Actions (tests on every push to `main`/`dev`; lint and Docker build pending).
 - [ ] Published container image.
 - [ ] Healthcheck in `docker-compose.yml`.
+
+Run them locally:
+
+```bash
+.venv/Scripts/pip install -r requirements-dev.txt   # Linux/macOS: .venv/bin/pip
+.venv/Scripts/python -m pytest tests
+```
+
+Voice tests need the whisper model already downloaded; CI skips them (`SKIP_STT=1`).
 
 ### License
 
@@ -220,3 +229,19 @@ Ver el diagrama y la tabla de la API en la sección [English](#english): las rut
 
 - Diseño para un solo usuario y sin autenticación. Usalo en localhost o en una red privada, y ponelo detrás de un proxy inverso con autenticación si lo exponés.
 - La calidad del triage depende del modelo local; el respaldo heurístico es aproximado por diseño.
+
+### Hoja de ruta
+
+- [x] Tests automáticos de la lógica de planificación (34: orden SJF/SRTF/LIFO/prioridad, preemción E2E, API, respaldo del triage, dictado).
+- [x] CI con GitHub Actions (tests en cada push a `main`/`dev`; lint y build de Docker pendientes).
+- [ ] Imagen de contenedor publicada.
+- [ ] Healthcheck en `docker-compose.yml`.
+
+Para correrlos en local:
+
+```bash
+.venv\Scripts\pip install -r requirements-dev.txt   # Linux/macOS: .venv/bin/pip
+.venv\Scripts\python -m pytest tests
+```
+
+Los tests de voz necesitan el modelo whisper ya descargado; en CI se saltan (`SKIP_STT=1`).

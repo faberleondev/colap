@@ -130,6 +130,7 @@ async def crear(t: TareaIn):
         if debe_preeemptir(current, est):
             db.accrue(current["id"])
             db.set_status(current["id"], "queued")
+            db.set_status(tid, "in_progress")   # ← faltaba: el test lo cazó
             db.set_running(tid)
             preempted = {"id": current["id"], "title": current["title"]}
             db.set_notice(

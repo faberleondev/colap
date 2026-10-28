@@ -1,0 +1,27 @@
+# CI de DespachApp: tests del despachador (scheduler, API, triage) en cada push.
+# El STT local se salta en CI (SKIP_STT=1) para no descargar el modelo whisper;
+# los tests de voz se corren localmente: pytest tests/test_voice.py
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      SKIP_STT: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Aplicar parche PyAV 19 ↔ faster-whisper 1.2.1 (si aplica)
+        run: python scripts/fix_av19_patch.py
+      - name: Tests
+        run: pytest -q
