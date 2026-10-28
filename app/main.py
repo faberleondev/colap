@@ -1,4 +1,4 @@
-"""Colap v0.2.1 — organizador de pendientes LIFO/SJF/SRTF con triage IA local.
+"""DespachApp v0.2.1.1 — despachador de pendientes LIFO/SJF/SRTF con triage IA local.
 
 Dictado: Web Speech API nativa del navegador con respaldo local — si falla
 ('network' o navegador sin soporte), el audio se graba y transcribe en el
@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.INFO,
 STT_MODEL = os.environ.get("STT_MODEL", "base")   # faster-whisper: tiny|base|small
 _whisper = None
 
-app = FastAPI(title="Colap", version="0.2.1")
+app = FastAPI(title="DespachApp", version="0.2.1.1")
 STATIC_DIR = Path(__file__).parent / "static"
 
 
