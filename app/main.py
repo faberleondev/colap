@@ -6,6 +6,7 @@ servidor con faster-whisper (100% offline, sin servicios externos).
 """
 import logging
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -23,7 +24,7 @@ logging.basicConfig(level=logging.INFO,
 STT_MODEL = os.environ.get("STT_MODEL", "base")   # faster-whisper: tiny|base|small
 _whisper = None
 
-app = FastAPI(title="DespachApp", version="0.2.1.1")
+app = FastAPI(title="DespachApp", version="0.2.1.2")
 STATIC_DIR = Path(__file__).parent / "static"
 
 
@@ -43,7 +44,7 @@ def _startup() -> None:
 
 # ---------------------------------------------------------------- modelos ---
 class TareaIn(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str = Field(default="", max_length=10000)   # se sanea y recorta en el endpoint
     description: str = ""
 
 
@@ -62,9 +63,26 @@ class ConfigIn(BaseModel):
 
 # -------------------------------------------------------------------- API ---
 
+MAX_TITLE = 200          # límite duro del modelo TareaIn (DB y UI)
+MAX_DESC = 2000
+ESPACIOS = re.compile(r"\s+")
+
+
+def _sanear(texto: str, maximo: int) -> str:
+    """Colapsa espacios/saltos de línea y corta al límite — nunca 422."""
+    limpio = ESPACIOS.sub(" ", texto or "").strip()
+    return limpio[:maximo].rstrip()
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/health")
+def health():
+    """Chequeo simple de vida (para monitores y para no ver 404s en devtools)."""
+    return {"status": "ok", "version": "0.2.1.2"}
 
 
 @app.get("/api/state")
@@ -87,15 +105,20 @@ async def estado():
 
 @app.post("/api/tasks")
 async def crear(t: TareaIn):
+    titulo = _sanear(t.title, MAX_TITLE)
+    if not titulo:
+        raise HTTPException(
+            400, "La tarea no tiene título — revisá que el dictado haya "
+            "capturado palabras y probá de nuevo el 🎤")
     settings = db.get_settings()
     triaged: dict | None = None
     source = "manual"
     if settings.get("auto_triage") == "1":
-        triaged = await triage.triar(t.title, t.description)
+        triaged = await triage.triar(titulo, _sanear(t.description, MAX_DESC))
         source = triaged.get("source", "manual")
     est = (triaged or {}).get("est_minutes", 30)
     tid = db.insert_task(
-        t.title, t.description,
+        titulo, _sanear(t.description, MAX_DESC),
         category=(triaged or {}).get("category", ""),
         est_minutes=est,
         priority=(triaged or {}).get("priority", 2),

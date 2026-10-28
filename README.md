@@ -3,7 +3,7 @@
 > **EN:** Self-hosted task dispatcher inspired by operating-system scheduling: LIFO stack, SJF/SRTF queue and priorities, with local LLM triage (Ollama).
 > **ES:** Despachador de tareas autoalojado inspirado en la planificación de sistemas operativos: pila LIFO, cola SJF/SRTF y prioridades, con triage por IA local (Ollama).
 >
-> **v0.2.1.1** · FastAPI + SQLite · dictado por voz con respaldo offline · Licencia MIT
+> **v0.2.1.2** · FastAPI + SQLite · dictado por voz con respaldo offline · Licencia MIT
 
 [English](#english) · [Español](#español)
 
@@ -98,6 +98,7 @@ flowchart LR
 
 | Method | Route | Action |
 |---|---|---|
+| `GET` | `/health` | Simple liveness check (for monitors). |
 | `GET` | `/api/state` | Full state (config, queue, etc.). |
 | `POST` | `/api/tasks` | Push a task `{title, description}`. |
 | `PATCH` | `/api/tasks/{id}` | Edit estimate, priority, etc. |
